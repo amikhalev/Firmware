@@ -31,6 +31,8 @@
  *
  ****************************************************************************/
 
+#pragma once
+
 /**
  * @file SMBus.hpp
  * SMBus v2.0 protocol implementation.

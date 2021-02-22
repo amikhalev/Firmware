@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2020 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,7 +32,7 @@
  ****************************************************************************/
 
 /**
- * @file batt_smbus.h
+ * @file batt_bq40z80.h
  *
  * Header for a battery monitor connected via SMBus (I2C).
  * Designed for BQ40Z50-R1/R2 and BQ40Z80
@@ -43,52 +43,29 @@
  *
  */
 
-#include "batt_smbus.h"
+#include "batt_bq40z80.h"
 
-extern "C" __EXPORT int batt_smbus_main(int argc, char *argv[]);
+extern "C" __EXPORT int batt_bq40z80_main(int argc, char *argv[]);
 
-BATT_SMBUS::BATT_SMBUS(I2CSPIBusOption bus_option, const int bus, SMBus *interface) :
+BATT_BQ40Z80::BATT_BQ40Z80(I2CSPIBusOption bus_option, const int bus, SMBus *interface) :
 	I2CSPIDriver(MODULE_NAME, px4::device_bus_to_wq(interface->get_device_id()), bus_option, bus,
 		     interface->get_device_address()),
 	_interface(interface)
 {
-	int battsource = 1;
-	int batt_device_type = (int)SMBUS_DEVICE_TYPE::UNDEFINED;
-
-	param_set(param_find("BAT_SOURCE"), &battsource);
-	param_get(param_find("BAT_SMBUS_MODEL"), &batt_device_type);
-
-
-	//TODO: probe the device and autodetect its type
-	if ((SMBUS_DEVICE_TYPE)batt_device_type == SMBUS_DEVICE_TYPE::BQ40Z80) {
-		_device_type = SMBUS_DEVICE_TYPE::BQ40Z80;
-
-	} else {
-		//default
-		_device_type = SMBUS_DEVICE_TYPE::BQ40Z50;
-	}
-
+	perf_alloc(PC_ELAPSED, "batt_bq40z80_cycle");
 	_interface->init();
-	// unseal() here to allow an external config script to write to protected flash.
-	// This is neccessary to avoid bus errors due to using standard i2c mode instead of SMbus mode.
-	// The external config script should then seal() the device.
-	unseal();
 }
 
-BATT_SMBUS::~BATT_SMBUS()
+BATT_BQ40Z80::~BATT_BQ40Z80()
 {
-	orb_unadvertise(_batt_topic);
 	perf_free(_cycle);
 
 	if (_interface != nullptr) {
 		delete _interface;
 	}
-
-	int battsource = 0;
-	param_set(param_find("BAT_SOURCE"), &battsource);
 }
 
-void BATT_SMBUS::RunImpl()
+void BATT_BQ40Z80::RunImpl()
 {
 	int ret = PX4_OK;
 
@@ -106,7 +83,11 @@ void BATT_SMBUS::RunImpl()
 
 	new_report.connected = true;
 
-	ret |= _interface->read_word(BATT_SMBUS_VOLTAGE, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_VOLTAGE, result);
+
+	// Convert millivolts to volts.
+	new_report.voltage_v = ((float)result) / 1000.0f;
+	new_report.voltage_filtered_v = new_report.voltage_v;
 
 	ret |= get_cell_voltages();
 
@@ -114,53 +95,45 @@ void BATT_SMBUS::RunImpl()
 		new_report.voltage_cell_v[i] = _cell_voltages[i];
 	}
 
-	// Convert millivolts to volts.
-	new_report.voltage_v = ((float)result) / 1000.0f;
-	new_report.voltage_filtered_v = new_report.voltage_v;
-
 	// Read current.
-	ret |= _interface->read_word(BATT_SMBUS_CURRENT, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_CURRENT, result);
 
 	new_report.current_a = (-1.0f * ((float)(*(int16_t *)&result)) / 1000.0f) * _c_mult;
 	new_report.current_filtered_a = new_report.current_a;
 
 	// Read average current.
-	ret |= _interface->read_word(BATT_SMBUS_AVERAGE_CURRENT, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_AVERAGE_CURRENT, result);
 
 	float average_current = (-1.0f * ((float)(*(int16_t *)&result)) / 1000.0f) * _c_mult;
 
 	new_report.average_current_a = average_current;
 
-	// If current is high, turn under voltage protection off. This is neccessary to prevent
-	// a battery from cutting off while flying with high current near the end of the packs capacity.
-	set_undervoltage_protection(average_current);
-
 	// Read run time to empty (minutes).
-	ret |= _interface->read_word(BATT_SMBUS_RUN_TIME_TO_EMPTY, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_RUN_TIME_TO_EMPTY, result);
 	new_report.run_time_to_empty = result;
 
 	// Read average time to empty (minutes).
-	ret |= _interface->read_word(BATT_SMBUS_AVERAGE_TIME_TO_EMPTY, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_AVERAGE_TIME_TO_EMPTY, result);
 	new_report.average_time_to_empty = result;
 
 	// Read remaining capacity.
-	ret |= _interface->read_word(BATT_SMBUS_REMAINING_CAPACITY, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_REMAINING_CAPACITY, result);
 
 	// Calculate total discharged amount in mah.
 	new_report.discharged_mah = _batt_startup_capacity - (float)result * _c_mult;
 
 	// Read Relative SOC.
-	ret |= _interface->read_word(BATT_SMBUS_RELATIVE_SOC, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_RELATIVE_SOC, result);
 
 	// Normalize 0.0 to 1.0
 	new_report.remaining = (float)result / 100.0f;
 
 	// Read Max Error
-	ret |= _interface->read_word(BATT_SMBUS_MAX_ERROR, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_MAX_ERROR, result);
 	new_report.max_error = result;
 
 	// Read battery temperature and covert to Celsius.
-	ret |= _interface->read_word(BATT_SMBUS_TEMP, result);
+	ret |= _interface->read_word(BATT_BQ40Z80_TEMP, result);
 	new_report.temperature = ((float)result / 10.0f) + CONSTANTS_ABSOLUTE_NULL_CELSIUS;
 
 	// Only publish if no errors.
@@ -191,78 +164,52 @@ void BATT_SMBUS::RunImpl()
 
 		new_report.interface_error = perf_event_count(_interface->_interface_errors);
 
-		int instance = 0;
-		orb_publish_auto(ORB_ID(battery_status), &_batt_topic, &new_report, &instance);
+		_battery_status_pub.publish(new_report);
 
 		_last_report = new_report;
 	}
 }
 
-void BATT_SMBUS::suspend()
+void BATT_BQ40Z80::suspend()
 {
 	ScheduleClear();
 }
 
-void BATT_SMBUS::resume()
+void BATT_BQ40Z80::resume()
 {
-	ScheduleOnInterval(BATT_SMBUS_MEASUREMENT_INTERVAL_US);
+	ScheduleOnInterval(BATT_BQ40Z80_MEASUREMENT_INTERVAL_US);
 }
 
-int BATT_SMBUS::get_cell_voltages()
+int BATT_BQ40Z80::get_cell_voltages()
 {
-	// Temporary variable for storing SMBUS reads.
-	uint16_t result = 0;
 	int ret = PX4_OK;
 
-	if (_device_type == SMBUS_DEVICE_TYPE::BQ40Z50) {
-		ret |= _interface->read_word(BATT_SMBUS_BQ40Z50_CELL_1_VOLTAGE, result);
-		// Convert millivolts to volts.
-		_cell_voltages[0] = ((float)result) / 1000.0f;
+	uint8_t DAstatus1[32 + 2] = {}; // 32 bytes of data and 2 bytes of address
 
-		ret |= _interface->read_word(BATT_SMBUS_BQ40Z50_CELL_2_VOLTAGE, result);
-		// Convert millivolts to volts.
-		_cell_voltages[1] = ((float)result) / 1000.0f;
-
-		ret |= _interface->read_word(BATT_SMBUS_BQ40Z50_CELL_3_VOLTAGE, result);
-		// Convert millivolts to volts.
-		_cell_voltages[2] = ((float)result) / 1000.0f;
-
-		ret |= _interface->read_word(BATT_SMBUS_BQ40Z50_CELL_4_VOLTAGE, result);
-		// Convert millivolts to volts.
-		_cell_voltages[3] = ((float)result) / 1000.0f;
-		_cell_voltages[4] = 0;
-		_cell_voltages[5] = 0;
-		_cell_voltages[6] = 0;
-
-	} else if (_device_type == SMBUS_DEVICE_TYPE::BQ40Z80) {
-		uint8_t DAstatus1[32 + 2] = {}; // 32 bytes of data and 2 bytes of address
-
-		//TODO: need to consider if set voltages to 0? -1?
-		if (PX4_OK != manufacturer_read(BATT_SMBUS_DASTATUS1, DAstatus1, sizeof(DAstatus1))) {
-			return PX4_ERROR;
-		}
-
-		// Convert millivolts to volts.
-		_cell_voltages[0] = ((float)((DAstatus1[1] << 8) | DAstatus1[0]) / 1000.0f);
-		_cell_voltages[1] = ((float)((DAstatus1[3] << 8) | DAstatus1[2]) / 1000.0f);
-		_cell_voltages[2] = ((float)((DAstatus1[5] << 8) | DAstatus1[4]) / 1000.0f);
-		_cell_voltages[3] = ((float)((DAstatus1[7] << 8) | DAstatus1[6]) / 1000.0f);
-
-		_pack_power = ((float)((DAstatus1[29] << 8) | DAstatus1[28]) / 100.0f); //TODO: decide if both needed
-		_pack_average_power = ((float)((DAstatus1[31] << 8) | DAstatus1[30]) / 100.0f);
-
-		uint8_t DAstatus3[18 + 2] = {}; // 18 bytes of data and 2 bytes of address
-
-		//TODO: need to consider if set voltages to 0? -1?
-		if (PX4_OK != manufacturer_read(BATT_SMBUS_DASTATUS3, DAstatus3, sizeof(DAstatus3))) {
-			return PX4_ERROR;
-		}
-
-		_cell_voltages[4] = ((float)((DAstatus3[1] << 8) | DAstatus3[0]) / 1000.0f);
-		_cell_voltages[5] = ((float)((DAstatus3[7] << 8) | DAstatus3[6]) / 1000.0f);
-		_cell_voltages[6] = ((float)((DAstatus3[13] << 8) | DAstatus3[12]) / 1000.0f);
-
+	//TODO: need to consider if set voltages to 0? -1?
+	if (PX4_OK != manufacturer_read(BATT_BQ40Z80_DASTATUS1, DAstatus1, sizeof(DAstatus1))) {
+		return PX4_ERROR;
 	}
+
+	// Convert millivolts to volts.
+	_cell_voltages[0] = ((float)((DAstatus1[1] << 8) | DAstatus1[0]) / 1000.0f);
+	_cell_voltages[1] = ((float)((DAstatus1[3] << 8) | DAstatus1[2]) / 1000.0f);
+	_cell_voltages[2] = ((float)((DAstatus1[5] << 8) | DAstatus1[4]) / 1000.0f);
+	_cell_voltages[3] = ((float)((DAstatus1[7] << 8) | DAstatus1[6]) / 1000.0f);
+
+	_pack_power = ((float)((DAstatus1[29] << 8) | DAstatus1[28]) / 100.0f); //TODO: decide if both needed
+	_pack_average_power = ((float)((DAstatus1[31] << 8) | DAstatus1[30]) / 100.0f);
+
+	uint8_t DAstatus3[18 + 2] = {}; // 18 bytes of data and 2 bytes of address
+
+	//TODO: need to consider if set voltages to 0? -1?
+	if (PX4_OK != manufacturer_read(BATT_BQ40Z80_DASTATUS3, DAstatus3, sizeof(DAstatus3))) {
+		return PX4_ERROR;
+	}
+
+	_cell_voltages[4] = ((float)((DAstatus3[1] << 8) | DAstatus3[0]) / 1000.0f);
+	_cell_voltages[5] = ((float)((DAstatus3[7] << 8) | DAstatus3[6]) / 1000.0f);
+	_cell_voltages[6] = ((float)((DAstatus3[13] << 8) | DAstatus3[12]) / 1000.0f);
 
 	//Calculate max cell delta
 	_min_cell_voltage = _cell_voltages[0];
@@ -280,14 +227,14 @@ int BATT_SMBUS::get_cell_voltages()
 	return ret;
 }
 
-void BATT_SMBUS::set_undervoltage_protection(float average_current)
+void BATT_BQ40Z80::set_undervoltage_protection(float average_current)
 {
 	// Disable undervoltage protection if armed. Enable if disarmed and cell voltage is above limit.
 	if (average_current > BATT_CURRENT_UNDERVOLTAGE_THRESHOLD) {
 		if (_cell_undervoltage_protection_status != 0) {
 			// Disable undervoltage protection
-			uint8_t protections_a_tmp = BATT_SMBUS_ENABLED_PROTECTIONS_A_CUV_DISABLED;
-			uint16_t address = BATT_SMBUS_ENABLED_PROTECTIONS_A_ADDRESS;
+			uint8_t protections_a_tmp = BATT_BQ40Z80_ENABLED_PROTECTIONS_A_CUV_DISABLED;
+			uint16_t address = BATT_BQ40Z80_ENABLED_PROTECTIONS_A_ADDRESS;
 
 			if (dataflash_write(address, &protections_a_tmp, 1) == PX4_OK) {
 				_cell_undervoltage_protection_status = 0;
@@ -302,8 +249,8 @@ void BATT_SMBUS::set_undervoltage_protection(float average_current)
 		if (_cell_undervoltage_protection_status == 0) {
 			if (_min_cell_voltage > BATT_VOLTAGE_UNDERVOLTAGE_THRESHOLD) {
 				// Enable undervoltage protection
-				uint8_t protections_a_tmp = BATT_SMBUS_ENABLED_PROTECTIONS_A_DEFAULT;
-				uint16_t address = BATT_SMBUS_ENABLED_PROTECTIONS_A_ADDRESS;
+				uint8_t protections_a_tmp = BATT_BQ40Z80_ENABLED_PROTECTIONS_A_DEFAULT;
+				uint16_t address = BATT_BQ40Z80_ENABLED_PROTECTIONS_A_ADDRESS;
 
 				if (dataflash_write(address, &protections_a_tmp, 1) == PX4_OK) {
 					_cell_undervoltage_protection_status = 1;
@@ -319,9 +266,9 @@ void BATT_SMBUS::set_undervoltage_protection(float average_current)
 }
 
 //@NOTE: Currently unused, could be helpful for debugging a parameter set though.
-int BATT_SMBUS::dataflash_read(const uint16_t address, void *data, const unsigned length)
+int BATT_BQ40Z80::dataflash_read(const uint16_t address, void *data, const unsigned length)
 {
-	uint8_t code = BATT_SMBUS_MANUFACTURER_BLOCK_ACCESS;
+	uint8_t code = BATT_BQ40Z80_MANUFACTURER_BLOCK_ACCESS;
 
 	int ret = _interface->block_write(code, &address, 2, true);
 
@@ -334,9 +281,9 @@ int BATT_SMBUS::dataflash_read(const uint16_t address, void *data, const unsigne
 	return ret;
 }
 
-int BATT_SMBUS::dataflash_write(const uint16_t address, void *data, const unsigned length)
+int BATT_BQ40Z80::dataflash_write(const uint16_t address, void *data, const unsigned length)
 {
-	uint8_t code = BATT_SMBUS_MANUFACTURER_BLOCK_ACCESS;
+	uint8_t code = BATT_BQ40Z80_MANUFACTURER_BLOCK_ACCESS;
 
 	uint8_t tx_buf[MAC_DATA_BUFFER_SIZE + 2] = {};
 
@@ -355,7 +302,7 @@ int BATT_SMBUS::dataflash_write(const uint16_t address, void *data, const unsign
 	return ret;
 }
 
-int BATT_SMBUS::get_startup_info()
+int BATT_BQ40Z80::get_startup_info()
 {
 	int ret = PX4_OK;
 
@@ -365,31 +312,27 @@ int BATT_SMBUS::get_startup_info()
 	param_get(param_find("BAT_EMERGEN_THR"), &_emergency_thr);
 	param_get(param_find("BAT_C_MULT"), &_c_mult);
 
-	int32_t cell_count_param = 0;
-	param_get(param_find("BAT_N_CELLS"), &cell_count_param);
-	_cell_count = math::min((uint8_t)cell_count_param, MAX_NUM_OF_CELLS);
-
-	ret |= _interface->block_read(BATT_SMBUS_MANUFACTURER_NAME, _manufacturer_name, BATT_SMBUS_MANUFACTURER_NAME_SIZE,
+	ret |= _interface->block_read(BATT_BQ40Z80_MANUFACTURER_NAME, _manufacturer_name, BATT_BQ40Z80_MANUFACTURER_NAME_SIZE,
 				      true);
 	_manufacturer_name[sizeof(_manufacturer_name) - 1] = '\0';
 
 	uint16_t serial_num;
-	ret |= _interface->read_word(BATT_SMBUS_SERIAL_NUMBER, serial_num);
+	ret |= _interface->read_word(BATT_BQ40Z80_SERIAL_NUMBER, serial_num);
 
 	uint16_t remaining_cap;
-	ret |= _interface->read_word(BATT_SMBUS_REMAINING_CAPACITY, remaining_cap);
+	ret |= _interface->read_word(BATT_BQ40Z80_REMAINING_CAPACITY, remaining_cap);
 
 	uint16_t cycle_count;
-	ret |= _interface->read_word(BATT_SMBUS_CYCLE_COUNT, cycle_count);
+	ret |= _interface->read_word(BATT_BQ40Z80_CYCLE_COUNT, cycle_count);
 
 	uint16_t full_cap;
-	ret |= _interface->read_word(BATT_SMBUS_FULL_CHARGE_CAPACITY, full_cap);
+	ret |= _interface->read_word(BATT_BQ40Z80_FULL_CHARGE_CAPACITY, full_cap);
 
 	uint16_t manufacture_date;
-	ret |= _interface->read_word(BATT_SMBUS_MANUFACTURE_DATE, manufacture_date);
+	ret |= _interface->read_word(BATT_BQ40Z80_MANUFACTURE_DATE, manufacture_date);
 
 	uint16_t state_of_health;
-	ret |= _interface->read_word(BATT_SMBUS_STATE_OF_HEALTH, state_of_health);
+	ret |= _interface->read_word(BATT_BQ40Z80_STATE_OF_HEALTH, state_of_health);
 
 	if (!ret) {
 		_serial_number = serial_num;
@@ -418,9 +361,9 @@ int BATT_SMBUS::get_startup_info()
 	return ret;
 }
 
-int BATT_SMBUS::manufacturer_read(const uint16_t cmd_code, void *data, const unsigned length)
+int BATT_BQ40Z80::manufacturer_read(const uint16_t cmd_code, void *data, const unsigned length)
 {
-	uint8_t code = BATT_SMBUS_MANUFACTURER_BLOCK_ACCESS;
+	uint8_t code = BATT_BQ40Z80_MANUFACTURER_BLOCK_ACCESS;
 
 	uint8_t address[2] = {};
 	address[0] = ((uint8_t *)&cmd_code)[0];
@@ -438,9 +381,9 @@ int BATT_SMBUS::manufacturer_read(const uint16_t cmd_code, void *data, const uns
 	return ret;
 }
 
-int BATT_SMBUS::manufacturer_write(const uint16_t cmd_code, void *data, const unsigned length)
+int BATT_BQ40Z80::manufacturer_write(const uint16_t cmd_code, void *data, const unsigned length)
 {
-	uint8_t code = BATT_SMBUS_MANUFACTURER_BLOCK_ACCESS;
+	uint8_t code = BATT_BQ40Z80_MANUFACTURER_BLOCK_ACCESS;
 
 	uint8_t tx_buf[MAC_DATA_BUFFER_SIZE + 2] = {};
 	tx_buf[0] = cmd_code & 0xff;
@@ -455,67 +398,60 @@ int BATT_SMBUS::manufacturer_write(const uint16_t cmd_code, void *data, const un
 	return ret;
 }
 
-int BATT_SMBUS::unseal()
+int BATT_BQ40Z80::unseal()
 {
 	// See bq40z50 technical reference.
 	uint16_t keys[2] = {0x0414, 0x3672};
 
-	int ret = _interface->write_word(BATT_SMBUS_MANUFACTURER_ACCESS, keys[0]);
+	int ret = _interface->write_word(BATT_BQ40Z80_MANUFACTURER_ACCESS, keys[0]);
 
-	ret |= _interface->write_word(BATT_SMBUS_MANUFACTURER_ACCESS, keys[1]);
+	ret |= _interface->write_word(BATT_BQ40Z80_MANUFACTURER_ACCESS, keys[1]);
 
 	return ret;
 }
 
-int BATT_SMBUS::seal()
+int BATT_BQ40Z80::seal()
 {
 	// See bq40z50 technical reference.
-	return manufacturer_write(BATT_SMBUS_SEAL, nullptr, 0);
+	return manufacturer_write(BATT_BQ40Z80_SEAL, nullptr, 0);
 }
 
-int BATT_SMBUS::lifetime_data_flush()
+int BATT_BQ40Z80::lifetime_data_flush()
 {
-	return manufacturer_write(BATT_SMBUS_LIFETIME_FLUSH, nullptr, 0);
+	return manufacturer_write(BATT_BQ40Z80_LIFETIME_FLUSH, nullptr, 0);
 }
 
-int BATT_SMBUS::lifetime_read_block_one()
+int BATT_BQ40Z80::lifetime_read_block_one()
 {
 	uint8_t lifetime_block_one[32 + 2] = {}; // 32 bytes of data and 2 bytes of address
 
-	if (PX4_OK != manufacturer_read(BATT_SMBUS_LIFETIME_BLOCK_ONE, lifetime_block_one, sizeof(lifetime_block_one))) {
+	if (PX4_OK != manufacturer_read(BATT_BQ40Z80_LIFETIME_BLOCK_ONE, lifetime_block_one, sizeof(lifetime_block_one))) {
 		PX4_INFO("Failed to read lifetime block 1.");
 		return PX4_ERROR;
 	}
 
 	//Get max cell voltage delta and convert from mV to V.
-	if (_device_type == SMBUS_DEVICE_TYPE::BQ40Z50) {
-
-		_lifetime_max_delta_cell_voltage = (float)(lifetime_block_one[17] << 8 | lifetime_block_one[16]) / 1000.0f;
-
-	} else if (_device_type == SMBUS_DEVICE_TYPE::BQ40Z80) {
-
-		_lifetime_max_delta_cell_voltage = (float)(lifetime_block_one[29] << 8 | lifetime_block_one[28]) / 1000.0f;
-	}
+	_lifetime_max_delta_cell_voltage = (float)(lifetime_block_one[29] << 8 | lifetime_block_one[28]) / 1000.0f;
 
 	PX4_INFO("Max Cell Delta: %4.2f", (double)_lifetime_max_delta_cell_voltage);
 
 	return PX4_OK;
 }
 
-void BATT_SMBUS::print_usage()
+void BATT_BQ40Z80::print_usage()
 {
 	PRINT_MODULE_DESCRIPTION(
 		R"DESCR_STR(
 ### Description
-Smart battery driver for the BQ40Z50 fuel gauge IC.
+Smart battery driver for the BQ40Z80 fuel gauge IC.
 
 ### Examples
 To write to flash to set parameters. address, number_of_bytes, byte0, ... , byteN
-$ batt_smbus -X write_flash 19069 2 27 0
+$ batt_bq40z80 -X write_flash 19069 2 27 0
 
 )DESCR_STR");
 
-	PRINT_MODULE_USAGE_NAME("batt_smbus", "driver");
+	PRINT_MODULE_USAGE_NAME("batt_bq40z80", "driver");
 
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(true, false);
@@ -534,7 +470,7 @@ $ batt_smbus -X write_flash 19069 2 27 0
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 }
 
-I2CSPIDriverBase *BATT_SMBUS::instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
+I2CSPIDriverBase *BATT_BQ40Z80::instantiate(const BusCLIArguments &cli, const BusInstanceIterator &iterator,
 				      int runtime_instance)
 {
 	SMBus *interface = new SMBus(iterator.bus(), cli.i2c_address);
@@ -542,12 +478,19 @@ I2CSPIDriverBase *BATT_SMBUS::instantiate(const BusCLIArguments &cli, const BusI
 		PX4_ERR("alloc failed");
 		return nullptr;
 	}
-	BATT_SMBUS *instance = new BATT_SMBUS(iterator.configuredBusOption(), iterator.bus(), interface);
+	BATT_BQ40Z80 *instance = new BATT_BQ40Z80(iterator.configuredBusOption(), iterator.bus(), interface);
 
 	if (instance == nullptr) {
 		PX4_ERR("alloc failed");
 		return nullptr;
 	}
+
+	// TODO: probe here
+
+	// unseal() here to allow an external config script to write to protected flash.
+	// This is neccessary to avoid bus errors due to using standard i2c mode instead of SMbus mode.
+	// The external config script should then seal() the device.
+	instance->unseal();
 
 	int ret = instance->get_startup_info();
 
@@ -556,13 +499,13 @@ I2CSPIDriverBase *BATT_SMBUS::instantiate(const BusCLIArguments &cli, const BusI
 		return nullptr;
 	}
 
-	instance->ScheduleOnInterval(BATT_SMBUS_MEASUREMENT_INTERVAL_US);
+	instance->ScheduleOnInterval(BATT_BQ40Z80_MEASUREMENT_INTERVAL_US);
 
 	return instance;
 }
 
 void
-BATT_SMBUS::custom_method(const BusCLIArguments &cli)
+BATT_BQ40Z80::custom_method(const BusCLIArguments &cli)
 {
 	switch(cli.custom1) {
 		case 1: {
@@ -598,12 +541,12 @@ BATT_SMBUS::custom_method(const BusCLIArguments &cli)
 	}
 }
 
-extern "C" __EXPORT int batt_smbus_main(int argc, char *argv[])
+extern "C" __EXPORT int batt_bq40z80_main(int argc, char *argv[])
 {
-	using ThisDriver = BATT_SMBUS;
+	using ThisDriver = BATT_BQ40Z80;
 	BusCLIArguments cli{true, false};
 	cli.default_i2c_frequency = 100000;
-	cli.i2c_address = BATT_SMBUS_ADDR;
+	cli.i2c_address = BATT_BQ40Z80_ADDR;
 
 	const char *verb = cli.parseDefaultArguments(argc, argv);
 	if (!verb) {

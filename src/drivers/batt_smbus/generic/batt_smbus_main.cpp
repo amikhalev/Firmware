@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,34 +31,18 @@
  *
  ****************************************************************************/
 
-/**
- * SMBUS Smart battery driver BQ40Z50 and BQ40Z80
- *
- * @reboot_required true
- *
- * @boolean
- * @group Sensors
- */
-PARAM_DEFINE_INT32(SENS_EN_BATT, 0);
+#include <lib/drivers/batt_smbus/batt_smbus.hpp>
 
-/**
- * Capacity/current multiplier for high-current capable SMBUS battery
- *
- * @reboot_required true
- * @decimal 1
- * @group Sensors
- */
-PARAM_DEFINE_FLOAT(BAT_C_MULT, 1.0f);
+class BATT_SMBUS_Generic : public BATT_SMBUS<BATT_SMBUS_Generic>
+{
+public:
+	static constexpr const char *MOD_NAME = "batt_smbus";
 
-/**
- * Battery device model
- *
- * @reboot_required true
- * @min 0
- * @max 2
- * @group Sensors
- * @value 0 AutoDetect
- * @value 1 BQ40Z50 based
- * @value 2 BQ40Z80 based
- */
-PARAM_DEFINE_INT32(BAT_SMBUS_MODEL, 0);
+	BATT_SMBUS_Generic(I2CSPIBusOption bus_option, const int bus, SMBus *interface)
+		: BATT_SMBUS(bus_option, bus, interface) {}
+};
+
+extern "C" __EXPORT int batt_smbus_main(int argc, char *argv[])
+{
+	return BATT_SMBUS_Generic::main(argc, argv);
+}

@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2017-2019 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2021 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,14 +30,10 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 ############################################################################
-
-add_subdirectory(accelerometer)
-add_subdirectory(airspeed)
-add_subdirectory(barometer)
-add_subdirectory(batt_smbus)
-add_subdirectory(device)
-add_subdirectory(gyroscope)
-add_subdirectory(led)
-add_subdirectory(magnetometer)
-add_subdirectory(rangefinder)
-add_subdirectory(smbus)
+px4_add_library(drivers__batt_smbus
+	batt_smbus.cpp
+)
+target_link_libraries(drivers__batt_smbus PUBLIC
+	drivers__smbus
+	modules__uORB
+)
