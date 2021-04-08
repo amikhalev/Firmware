@@ -1,3 +1,4 @@
+add_definitions(-DUSE_S_RGB_LED_DMA)
 
 px4_add_board(
 	PLATFORM nuttx
@@ -35,6 +36,7 @@ px4_add_board(
 		imu/invensense/icm20948 # required for ak09916 mag
 		#irlock
 		lights # all available light drivers
+		lights/neopixel
 		magnetometer # all available magnetometer drivers
 		optical_flow # all available optical flow drivers
 		#osd

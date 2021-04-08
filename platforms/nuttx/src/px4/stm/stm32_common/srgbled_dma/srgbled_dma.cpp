@@ -90,7 +90,7 @@
  * the bits
  */
 
-#if !defined(STM32_RCC_APB1ENR) && defined(STM32_RCC_APB1LENR)
+// #if !defined(STM32_RCC_APB1ENR) && defined(STM32_RCC_APB1LENR)
 # define STM32_RCC_APB1ENR STM32_RCC_APB1LENR
 
 # define RCC_APB1ENR_TIM2EN  RCC_APB1LENR_TIM2EN
@@ -102,7 +102,7 @@
 # define RCC_APB1ENR_TIM12EN RCC_APB1LENR_TIM12EN
 # define RCC_APB1ENR_TIM13EN RCC_APB1LENR_TIM13EN
 # define RCC_APB1ENR_TIM14EN RCC_APB1LENR_TIM14EN
-#endif
+// #endif
 
 /* Serial LED Timer configuration */
 
@@ -343,6 +343,17 @@ void dma_callback(DMA_HANDLE handle, uint8_t status, void *arg)
 
 // The led pwm API
 
+static inline void px4_stm32_dmasetup(DMA_HANDLE handle, uint32_t paddr, uint32_t maddr,
+				      size_t ntransfers, uint32_t scr)
+{
+	struct stm32_dma_config_s cfg;
+	cfg.paddr = paddr;
+	cfg.maddr = maddr;
+	cfg.cfg1 = scr;
+	cfg.cfg2 = 0;
+	cfg.ndata = ntransfers;
+	stm32_dmasetup(handle, &cfg);
+}
 
 /* Begin 2 words be bit: high time, low time repeated the number of bits per color
  * times colors per LED package * times number of led packages
@@ -374,11 +385,11 @@ extern int neopixel_write(neopixel::NeoLEDData *led_data, int number_of_packages
 
 	// Set up the DMA Operations
 
-	stm32_dmasetup(dma_handle,
-		       _TIM_REG(STM32_GTIM_DMAR_OFFSET),
-		       (uint32_t) bits,
-		       arraySize(bits),
-		       SLED_DMA_SCR);
+	px4_stm32_dmasetup(dma_handle,
+			   _TIM_REG(STM32_GTIM_DMAR_OFFSET),
+			   (uint32_t) bits,
+			   arraySize(bits),
+			   SLED_DMA_SCR);
 
 	// atomic operations
 	irqstate_t flags = px4_enter_critical_section();

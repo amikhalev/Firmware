@@ -374,6 +374,23 @@
 
 #define BOARD_ENABLE_CONSOLE_BUFFER
 
+#define BOARD_HAS_N_S_RGB_LED       4  /* Uses 8 WS2812 digital led chip */
+#define BOARD_MAX_LEDS              BOARD_HAS_N_S_RGB_LED
+
+/* USE_S_RGB_LED_DMAis passed in from the *.cmake file
+ * Bootloader is not timming sensitive and can use the SW version as a
+ * size savings
+ * The Application can not as it needs DMA to maintain reall time.
+ */
+
+#if defined(USE_S_RGB_LED_DMA)
+#  define S_RGB_LED_DMA              DMAMAP_TIM4_CH3
+#  define S_RGB_LED_TIMER                4   /* timer 4    */
+#  define S_RGB_LED_CHANNEL              3   /* channel 3  */
+//#  define S_RGB_LED_CHANNELN             1   /* not inverted */
+#  define S_RGB_LED_TIM_GPIO             GPIO_TIM4_CH3OUT_1 /* PB8 */
+#endif
+
 __BEGIN_DECLS
 
 /****************************************************************************************************
