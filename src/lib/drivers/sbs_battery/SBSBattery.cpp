@@ -51,18 +51,10 @@
 
 #include <lib/drivers/sbs_battery/SBSBattery.hpp>
 
-// Convert a uint16_t to int16_t without relying on undefined behavior.
+// Convert a uint16_t to int16_t without relying on type punning pointers
 inline static int16_t u2int16(uint16_t x)
 {
-	if (x <= INT16_MAX) {
-		return static_cast<int16_t>(x);
-	}
-
-	if (x >= INT16_MIN) {
-		return static_cast<int16_t>(x - INT16_MIN) + INT16_MIN;
-	}
-
-	return 0;
+	return static_cast<int16_t>(x);
 }
 
 SBSBatteryBase::SBSBatteryBase(SMBus *interface) :
@@ -76,9 +68,7 @@ SBSBatteryBase::~SBSBatteryBase()
 {
 	perf_free(_cycle);
 
-	if (_interface != nullptr) {
-		delete _interface;
-	}
+	delete _interface;
 }
 
 int SBSBatteryBase::populate_startup_data()
@@ -86,7 +76,7 @@ int SBSBatteryBase::populate_startup_data()
 	int ret = PX4_OK;
 
 	// There's no convenient way to auto-detect the number of cells via the SMBus Battery specification, so we just read it from a parameter for now
-	_cell_count = uint8_t(_param_sbs_bat_c_mult.get());
+	_cell_count = uint8_t(_param_sbs_bat_n_cells.get());
 
 	ret |= _interface->block_read(SBS_REG_MANUFACTURER_NAME, _manufacturer_name, MANUFACTURER_NAME_SIZE,
 				      true);
